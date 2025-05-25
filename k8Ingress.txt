@@ -1,0 +1,54 @@
+Basic Ingress Inspection
+****************************
+# List all ingresses across all namespaces
+kubectl get ingress --all-namespaces
+
+# List ingresses in current namespace
+kubectl get ingress
+
+# Get detailed information about a specific ingress
+kubectl describe ingress <ingress-name> -n <namespace>
+
+# Get ingress in YAML format (shows full configuration)
+kubectl get ingress <ingress-name> -n <namespace> -o yaml
+
+Extract Specific URL Information
+***********************************
+
+bash# Get ingress hosts and paths in a clean format
+kubectl get ingress --all-namespaces -o custom-columns="NAMESPACE:.metadata.namespace,NAME:.metadata.name,HOSTS:.spec.rules[*].host,PATHS:.spec.rules[*].http.paths[*].path"
+
+# Get just the hosts from all ingresses
+kubectl get ingress --all-namespaces -o jsonpath='{range .items[*]}{.metadata.namespace}{"\t"}{.metadata.name}{"\t"}{.spec.rules[*].host}{"\n"}{end}'
+
+# Get backend services and ports
+kubectl get ingress <ingress-name> -n <namespace> -o jsonpath='{range .spec.rules[*]}{.host}{"\t"}{range .http.paths[*]}{.backend.service.name}:{.backend.service.port.number}{"\t"}{.path}{"\n"}{end}{end}'
+
+For HAProxy Configuration
+***********************************
+# Get ingress details in a format useful for HAProxy backend configuration
+kubectl get ingress --all-namespaces -o custom-columns="HOST:.spec.rules[*].host,SERVICE:.spec.rules[*].http.paths[*].backend.service.name,PORT:.spec.rules[*].http.paths[*].backend.service.port.number,PATH:.spec.rules[*].http.paths[*].path"
+
+# Get service endpoints (actual pod IPs) for HAProxy backends
+kubectl get endpoints <service-name> -n <namespace> -o jsonpath='{.subsets[*].addresses[*].ip}:{.subsets[*].ports[*].port}'
+
+Monitor Ingress Status
+************************
+
+# Watch ingress changes in real-time
+kubectl get ingress -w
+
+# Check ingress controller logs
+kubectl logs -n <ingress-controller-namespace> <ingress-controller-pod>
+
+# Get ingress with external IPs/load balancer info
+kubectl get ingress -o wide
+
+Example Output Processing
+***********************
+# Create a simple script to format for HAProxy
+kubectl get ingress --all-namespaces -o json | jq -r '.items[] | 
+  .spec.rules[]? | 
+  "backend " + .host + "\n" + 
+  "  server " + .host + " " + (.http.paths[0].backend.service.name // "unknown") + 
+  ":" + (.http.paths[0].backend.service.port.number // "80" | tostring)'
