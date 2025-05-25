@@ -435,3 +435,34 @@ echo "show stat" | sudo socat stdio /run/haproxy/admin.sock
 # Monitor real-time connections
 watch -n 1 'netstat -an | grep :80'
 This setup provides a robust high-availability load balancing solution with automatic failover capabilities.
+
+
+Firewall Rules by Server Type
+On HAProxy/Load Balancer Servers (192.168.1.101, 192.168.1.102)
+bash# Allow incoming traffic to services HAProxy provides
+sudo ufw allow 80/tcp          # HTTP traffic from clients
+sudo ufw allow 443/tcp         # HTTPS traffic from clients (if using SSL)
+sudo ufw allow 8404/tcp        # HAProxy stats page
+
+# Allow VRRP for Keepalived communication between load balancers
+sudo ufw allow 112/tcp         # VRRP protocol
+sudo ufw allow from 192.168.1.101 to any port 112
+sudo ufw allow from 192.168.1.102 to any port 112
+
+# Allow SSH for management
+sudo ufw allow 22/tcp
+
+# DON'T add rules for web server ports (8888/8080) here
+# HAProxy makes outbound connections to web servers - outbound is allowed by default
+On Web Servers (192.168.1.201, 192.168.1.202, 192.168.1.203)
+bash# Allow incoming traffic from HAProxy servers to Apache
+sudo ufw allow from 192.168.1.101 to any port 8888
+sudo ufw allow from 192.168.1.102 to any port 8888
+
+# Allow SSH for management
+sudo ufw allow 22/tcp
+
+# Optionally allow direct access for testing (remove in production)
+sudo ufw allow 8888/tcp        # Remove this in production for security
+
+# DON'T allow port 80 from outside if you want HAProxy to be the only entry point
