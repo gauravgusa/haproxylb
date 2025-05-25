@@ -1,0 +1,350 @@
+HAProxy + Keepalived High Availability Setup Guide
+Network Architecture Overview
+Virtual IP: 192.168.1.100
+Load Balancer 1 (Master): 192.168.1.101
+Load Balancer 2 (Backup): 192.168.1.102
+Web Server 1: 192.168.1.201 (Apache on port 8888)
+Web Server 2: 192.168.1.202 (Apache on port 8888)
+Web Server 3: 192.168.1.203 (Apache on port 8888)
+Prerequisites
+
+5 Ubuntu servers (2 for load balancers, 3 for web servers)
+All servers should be on the same network
+Root or sudo access on all servers
+
+Part 1: Setup Apache Web Servers (Servers 1, 2, 3)
+On each web server (192.168.1.201, 192.168.1.202, 192.168.1.203):
+bash# Update system
+sudo apt update && sudo apt upgrade -y
+
+# Install Apache
+sudo apt install apache2 -y
+
+# Create custom configuration for port 8888
+sudo tee /etc/apache2/sites-available/custom-8888.conf << EOF
+<VirtualHost *:8888>
+    DocumentRoot /var/www/html
+    ServerName localhost
+    
+    <Directory /var/www/html>
+        Options Indexes FollowSymLinks
+        AllowOverride None
+        Require all granted
+    </Directory>
+    
+    ErrorLog \${APACHE_LOG_DIR}/error.log
+    CustomLog \${APACHE_LOG_DIR}/access.log combined
+</VirtualHost>
+EOF
+
+# Add Listen directive for port 8888
+echo "Listen 8888" | sudo tee -a /etc/apache2/ports.conf
+
+# Disable default site and enable custom site
+sudo a2dissite 000-default
+sudo a2ensite custom-8888
+
+# Create unique index page for each server
+sudo tee /var/www/html/index.html << EOF
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Web Server $(hostname -I | awk '{print $1}')</title>
+    <style>
+        body { font-family: Arial; text-align: center; margin-top: 100px; }
+        .server-info { background: #f0f0f0; padding: 20px; margin: 20px; }
+    </style>
+</head>
+<body>
+    <h1>Web Server: $(hostname)</h1>
+    <div class="server-info">
+        <h2>Server IP: $(hostname -I | awk '{print $1}')</h2>
+        <h3>Port: 8888</h3>
+        <p>Timestamp: $(date)</p>
+        <p>Hostname: $(hostname)</p>
+    </div>
+</body>
+</html>
+EOF
+
+# Start and enable Apache
+sudo systemctl restart apache2
+sudo systemctl enable apache2
+
+# Allow port 8888 through firewall
+sudo ufw allow 8888/tcp
+
+# Verify Apache is running
+sudo systemctl status apache2
+netstat -tulpn | grep :8888
+Test each web server:
+bash# From any server, test each web server
+curl http://192.168.1.201:8888
+curl http://192.168.1.202:8888
+curl http://192.168.1.203:8888
+Part 2: Setup HAProxy and Keepalived (Load Balancers)
+On both load balancer servers (192.168.1.101 and 192.168.1.102):
+bash# Update system
+sudo apt update && sudo apt upgrade -y
+
+# Install HAProxy and Keepalived
+sudo apt install haproxy keepalived -y
+
+# Enable IP forwarding
+echo 'net.ipv4.ip_forward=1' | sudo tee -a /etc/sysctl.conf
+echo 'net.ipv4.ip_nonlocal_bind=1' | sudo tee -a /etc/sysctl.conf
+sudo sysctl -p
+Configure HAProxy on both load balancers:
+bash# Backup original config
+sudo cp /etc/haproxy/haproxy.cfg /etc/haproxy/haproxy.cfg.backup
+
+# Create new HAProxy configuration
+sudo tee /etc/haproxy/haproxy.cfg << EOF
+global
+    daemon
+    chroot /var/lib/haproxy
+    stats socket /run/haproxy/admin.sock mode 660 level admin
+    stats timeout 30s
+    user haproxy
+    group haproxy
+    
+    # Default SSL material locations
+    ca-base /etc/ssl/certs
+    crt-base /etc/ssl/private
+    
+    # Intermediate configuration
+    ssl-default-bind-ciphers ECDHE+AESGCM:ECDHE+CHACHA20:DHE+AESGCM:DHE+CHACHA20:!aNULL:!MD5:!DSS
+    ssl-default-bind-options ssl-min-ver TLSv1.2 no-tls-tickets
+
+defaults
+    mode http
+    timeout connect 5000ms
+    timeout client 50000ms
+    timeout server 50000ms
+    option httplog
+    option dontlognull
+    option redispatch
+    retries 3
+    maxconn 2000
+    
+    # Enable health checks
+    option httpchk GET /
+    
+# Stats page (optional)
+listen stats
+    bind *:8404
+    stats enable
+    stats uri /stats
+    stats refresh 30s
+    stats admin if TRUE
+
+# Frontend - receives requests
+frontend web_frontend
+    bind 192.168.1.100:80
+    default_backend web_servers
+    
+    # Optional: Add logging
+    capture request header Host len 32
+    capture response header Content-Length len 10
+
+# Backend - distributes to web servers
+backend web_servers
+    balance roundrobin
+    option httpchk GET /
+    
+    # Web servers
+    server web1 192.168.1.201:8888 check inter 2000 rise 2 fall 3
+    server web2 192.168.1.202:8888 check inter 2000 rise 2 fall 3
+    server web3 192.168.1.203:8888 check inter 2000 rise 2 fall 3
+EOF
+
+# Test HAProxy configuration
+sudo haproxy -c -f /etc/haproxy/haproxy.cfg
+Configure Keepalived on Master Load Balancer (192.168.1.101):
+bashsudo tee /etc/keepalived/keepalived.conf << EOF
+global_defs {
+    router_id LB1
+    script_user root
+    enable_script_security
+}
+
+# Script to check HAProxy status
+vrrp_script chk_haproxy {
+    script "/bin/curl -f http://localhost:8404/stats || exit 1"
+    interval 2
+    weight -2
+    fall 3
+    rise 2
+}
+
+vrrp_instance VI_1 {
+    state MASTER
+    interface $(ip route | grep default | awk '{print $5}' | head -1)
+    virtual_router_id 51
+    priority 110
+    advert_int 1
+    authentication {
+        auth_type PASS
+        auth_pass mypassword123
+    }
+    
+    virtual_ipaddress {
+        192.168.1.100/24
+    }
+    
+    track_script {
+        chk_haproxy
+    }
+}
+EOF
+Configure Keepalived on Backup Load Balancer (192.168.1.102):
+bashsudo tee /etc/keepalived/keepalived.conf << EOF
+global_defs {
+    router_id LB2
+    script_user root
+    enable_script_security
+}
+
+# Script to check HAProxy status
+vrrp_script chk_haproxy {
+    script "/bin/curl -f http://localhost:8404/stats || exit 1"
+    interval 2
+    weight -2
+    fall 3
+    rise 2
+}
+
+vrrp_instance VI_1 {
+    state BACKUP
+    interface $(ip route | grep default | awk '{print $5}' | head -1)
+    virtual_router_id 51
+    priority 100
+    advert_int 1
+    authentication {
+        auth_type PASS
+        auth_pass mypassword123
+    }
+    
+    virtual_ipaddress {
+        192.168.1.100/24
+    }
+    
+    track_script {
+        chk_haproxy
+    }
+}
+EOF
+Start services on both load balancers:
+bash# Enable and start HAProxy
+sudo systemctl enable haproxy
+sudo systemctl start haproxy
+sudo systemctl status haproxy
+
+# Enable and start Keepalived
+sudo systemctl enable keepalived
+sudo systemctl start keepalived
+sudo systemctl status keepalived
+
+# Allow necessary ports through firewall
+sudo ufw allow 80/tcp
+sudo ufw allow 8404/tcp
+sudo ufw allow 112/tcp  # VRRP protocol
+Part 3: Testing the Setup
+1. Check Virtual IP Assignment:
+bash# On master load balancer, you should see the virtual IP
+ip addr show
+
+# Check which server has the virtual IP
+ping -c 2 192.168.1.100
+2. Test Load Balancing:
+bash# From any machine on the network, repeatedly curl the virtual IP
+for i in {1..10}; do
+    echo "Request $i:"
+    curl http://192.168.1.100
+    echo "---"
+    sleep 1
+done
+3. Test High Availability:
+Scenario 1: Stop HAProxy on Master
+bash# On master load balancer (192.168.1.101)
+sudo systemctl stop haproxy
+
+# Check if virtual IP moved to backup
+# On backup load balancer (192.168.1.102)
+ip addr show
+
+# Test connectivity
+curl http://192.168.1.100
+Scenario 2: Stop one web server
+bash# On one web server
+sudo systemctl stop apache2
+
+# Continue testing - requests should go to remaining servers
+for i in {1..5}; do curl http://192.168.1.100; echo "---"; done
+4. Check HAProxy Stats:
+bash# Access HAProxy statistics page
+curl http://192.168.1.101:8404/stats
+# Or visit in browser: http://192.168.1.101:8404/stats
+Part 4: Monitoring and Logs
+Monitor Keepalived:
+bash# Check keepalived logs
+sudo journalctl -u keepalived -f
+
+# Check VRRP status
+sudo systemctl status keepalived
+Monitor HAProxy:
+bash# Check HAProxy logs
+sudo journalctl -u haproxy -f
+
+# Check HAProxy status
+sudo systemctl status haproxy
+
+# Test HAProxy configuration
+sudo haproxy -c -f /etc/haproxy/haproxy.cfg
+Monitor Apache:
+bash# Check Apache logs on web servers
+sudo tail -f /var/log/apache2/access.log
+sudo tail -f /var/log/apache2/error.log
+Troubleshooting
+Common Issues:
+
+Virtual IP not assigned:
+
+Check network interface name in keepalived.conf
+Verify VRRP authentication matches on both servers
+Check firewall rules
+
+
+HAProxy not starting:
+
+Test configuration: sudo haproxy -c -f /etc/haproxy/haproxy.cfg
+Check if ports are already in use: netstat -tulpn | grep :80
+
+
+Web servers not responding:
+
+Verify Apache is running on port 8888
+Check firewall rules on web servers
+Test direct connection to each web server
+
+
+Load balancing not working:
+
+Check HAProxy backend server status in stats page
+Verify web server health checks are passing
+
+
+
+Useful Commands:
+bash# Check which server has the virtual IP
+ip addr show | grep 192.168.1.100
+
+# Test specific backend servers
+curl -H "Host: test.local" http://192.168.1.201:8888
+
+# Check HAProxy backend status
+echo "show stat" | sudo socat stdio /run/haproxy/admin.sock
+
+# Monitor real-time connections
+watch -n 1 'netstat -an | grep :80'
+This setup provides a robust high-availability load balancing solution with automatic failover capabilities.
