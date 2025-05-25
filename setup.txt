@@ -1,23 +1,38 @@
-bash# Stop Apache
-sudo systemctl stop apache2
+# Create a separate directory for HA testing
+sudo mkdir -p /var/www/ha-test
 
-# Edit ports.conf to only listen on 8888
-sudo tee /etc/apache2/ports.conf << EOF
-# Only listen on port 8888, not port 80
-Listen 8888
+# Create the test page there
+sudo tee /var/www/ha-test/index.html << EOF
+<!DOCTYPE html>
+<html>
+<head>
+    <title>HA Test Server $(hostname -I | awk '{print $1}')</title>
+    <style>
+        body { font-family: Arial; text-align: center; margin-top: 100px; background: #e8f4fd; }
+        .server-info { background: #fff; padding: 20px; margin: 20px auto; max-width: 600px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        h1 { color: #2c5aa0; }
+    </style>
+</head>
+<body>
+    <h1>🔧 HA Test Server: $(hostname)</h1>
+    <div class="server-info">
+        <h2>Server IP: $(hostname -I | awk '{print $1}')</h2>
+        <h3>Port: 8888 (HA Testing)</h3>
+        <p><strong>Timestamp:</strong> $(date)</p>
+        <p><strong>Hostname:</strong> $(hostname)</p>
+        <p><strong>Purpose:</strong> High Availability Load Balancer Testing</p>
+    </div>
+</body>
+</html>
 EOF
 
-# Make sure we disable the default site that tries to use port 80
-sudo a2dissite 000-default 2>/dev/null || true
-sudo a2dissite default-ssl 2>/dev/null || true
-
-# Create/recreate the 8888 site configuration
+# Update the 8888 site to use the separate directory
 sudo tee /etc/apache2/sites-available/custom-8888.conf << EOF
 <VirtualHost *:8888>
-    DocumentRoot /var/www/html
+    DocumentRoot /var/www/ha-test
     ServerName localhost
     
-    <Directory /var/www/html>
+    <Directory /var/www/ha-test>
         Options Indexes FollowSymLinks
         AllowOverride None
         Require all granted
@@ -28,23 +43,11 @@ sudo tee /etc/apache2/sites-available/custom-8888.conf << EOF
 </VirtualHost>
 EOF
 
-# Enable only the 8888 site
-sudo a2ensite custom-8888
-
-# Test the configuration
+# Test configuration
 sudo apache2ctl configtest
-You should see Syntax OK. If you get any errors, let me know what they are.
-bash# Start Apache
+
+# Start Apache
 sudo systemctl start apache2
-
-# Check status
-sudo systemctl status apache2
-
-# Verify Apache is only listening on 8888
-sudo netstat -tulpn | grep apache
-
-
-
 
 ********************
 
