@@ -1,3 +1,53 @@
+bash# Stop Apache
+sudo systemctl stop apache2
+
+# Edit ports.conf to only listen on 8888
+sudo tee /etc/apache2/ports.conf << EOF
+# Only listen on port 8888, not port 80
+Listen 8888
+EOF
+
+# Make sure we disable the default site that tries to use port 80
+sudo a2dissite 000-default 2>/dev/null || true
+sudo a2dissite default-ssl 2>/dev/null || true
+
+# Create/recreate the 8888 site configuration
+sudo tee /etc/apache2/sites-available/custom-8888.conf << EOF
+<VirtualHost *:8888>
+    DocumentRoot /var/www/html
+    ServerName localhost
+    
+    <Directory /var/www/html>
+        Options Indexes FollowSymLinks
+        AllowOverride None
+        Require all granted
+    </Directory>
+    
+    ErrorLog \${APACHE_LOG_DIR}/error.log
+    CustomLog \${APACHE_LOG_DIR}/access.log combined
+</VirtualHost>
+EOF
+
+# Enable only the 8888 site
+sudo a2ensite custom-8888
+
+# Test the configuration
+sudo apache2ctl configtest
+You should see Syntax OK. If you get any errors, let me know what they are.
+bash# Start Apache
+sudo systemctl start apache2
+
+# Check status
+sudo systemctl status apache2
+
+# Verify Apache is only listening on 8888
+sudo netstat -tulpn | grep apache
+
+
+
+
+********************
+
 HAProxy + Keepalived High Availability Setup Guide
 Network Architecture Overview
 Virtual IP: 192.168.1.100
