@@ -13,11 +13,39 @@ echo "Listen 8888" | sudo tee -a /etc/apache2/ports.conf
 # Verify the contents
 cat /etc/apache2/ports.conf
 
-# Add port 8888 to existing configuration
-echo "Listen 8888" | sudo tee -a /etc/apache2/ports.conf
+# Create a simple 8888 site that won't conflict
+sudo tee /etc/apache2/sites-available/ha-test-8888.conf << EOF
+<VirtualHost *:8888>
+    DocumentRoot /var/www/ha-test
+    ServerName localhost
+    
+    <Directory /var/www/ha-test>
+        Options Indexes FollowSymLinks
+        AllowOverride None
+        Require all granted
+    </Directory>
+    
+    ErrorLog \${APACHE_LOG_DIR}/ha-test-error.log
+    CustomLog \${APACHE_LOG_DIR}/ha-test-access.log combined
+</VirtualHost>
+EOF
 
-# Verify the contents
-cat /etc/apache2/ports.conf
+# Create the directory and test page
+sudo mkdir -p /var/www/ha-test
+sudo tee /var/www/ha-test/index.html << EOF
+<!DOCTYPE html>
+<html>
+<head><title>HA Test - $(hostname)</title></head>
+<body>
+    <h1>HA Test Server: $(hostname)</h1>
+    <p>IP: $(hostname -I | awk '{print $1}')</p>
+    <p>Port: 8888</p>
+    <p>Time: $(date)</p>
+</body>
+</html>
+EOF
+
+
 
 
 # Enable the new site
@@ -26,8 +54,19 @@ sudo a2ensite ha-test-8888
 # Test the configuration
 sudo apache2ctl configtest
 
-# Test configuration
-sudo apache2ctl configtest
+
+# Check if something else is using port 8888
+sudo fuser 8888/tcp
+
+# If something is using it, see what it is
+sudo lsof -i :8888
+
+# Check if it's another Apache process
+ps aux | grep apache2
+
+# Kill any stray Apache processes
+sudo pkill apache2
+
 
 # Start Apache
 sudo systemctl start apache2
