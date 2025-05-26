@@ -1,0 +1,69 @@
+Get the NodePort of Your Ingress Controller's Service
+Your Ingress Controller will have a Kubernetes Service of type: NodePort. You need to find the specific port number that Kubernetes allocated for this Service on your nodes.
+
+First, you need to know the name of your Ingress Controller's Service. Common names include ingress-nginx-controller, haproxy-ingress, traefik, etc. It's often in the ingress-nginx or kube-system namespace.
+
+Option A: If you know the name and namespace of your Ingress Controller Service (most precise):
+
+Let's assume your Ingress Controller Service is named ingress-nginx-controller in the ingress-nginx namespace (a very common setup).
+
+Bash
+
+kubectl get service ingress-nginx-controller -n ingress-nginx -o jsonpath='{.spec.ports[?(@.name=="http")].nodePort}'
+# For HTTPS (if applicable):
+kubectl get service ingress-nginx-controller -n ingress-nginx -o jsonpath='{.spec.ports[?(@.name=="https")].nodePort}'
+Explanation:
+
+kubectl get service <service-name> -n <namespace>: Gets the details of the specified Service in the given namespace.
+-o jsonpath='{...}': This is a powerful way to extract specific data from the JSON output.
+.spec.ports: Accesses the ports array within the Service's spec.
+[?(@.name=="http")]: Filters the array to find the port with the name "http" (or "https").
+.nodePort: Extracts the nodePort value for that specific port.
+Example Output (for the http port):
+
+30080
+Option B: If you don't know the exact name/namespace but want to find common Ingress Controller Services:
+
+Bash
+
+kubectl get service --all-namespaces -o wide | grep -E "NodePort|ingress|haproxy|traefik"
+Explanation:
+
+kubectl get service --all-namespaces -o wide: Lists all services in all namespaces with wide output.
+grep -E "NodePort|ingress|haproxy|traefik": Filters the output to show lines containing "NodePort" or common Ingress Controller names.
+Example Output:
+
+NAMESPACE        NAME                   TYPE       CLUSTER-IP       EXTERNAL-IP   PORT(S)                      AGE     SELECTOR
+default          kubernetes             ClusterIP  10.96.0.1        <none>        443/TCP                      3d      <none>
+ingress-nginx    ingress-nginx-controller NodePort   10.100.100.100   <none>        80:30080/TCP,443:30443/TCP   3d      app.kubernetes.io/component=controller,app.kubernetes.io/instance=ingress-nginx,app.kubernetes.io/name=ingress-nginx
+In this example, you can see ingress-nginx-controller is of type: NodePort and exposes 80:30080/TCP and 443:30443/TCP. This means the HTTP NodePort is 30080 and the HTTPS NodePort is 30443.
+
+Putting it Together for HAProxy:
+
+Once you have the worker node IPs (e.g., 10.0.0.11, 10.0.0.12, 10.0.0.13) and the NodePorts (e.g., HTTP 30080, HTTPS 30443), you would configure your external HAProxy like this:
+
+Code snippet
+
+frontend http_in
+    bind *:80
+    mode http
+    default_backend k8s_ingress_http
+
+frontend https_in
+    bind *:443
+    mode tcp # Or 'http' if you're doing SSL termination here
+    default_backend k8s_ingress_https
+
+backend k8s_ingress_http
+    mode http
+    balance roundrobin
+    server worker-1 10.0.0.11:30080 check
+    server worker-2 10.0.0.12:30080 check
+    server worker-3 10.0.0.13:30080 check
+
+backend k8s_ingress_https
+    mode tcp # Or 'http' if you're doing SSL termination here
+    balance roundrobin
+    server worker-1 10.0.0.11:30443 check
+    server worker-2 10.0.0.12:30443 check
+    server worker-3 10.0.0.13:30443 check
