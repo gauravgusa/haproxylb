@@ -1,4 +1,34 @@
-Get the NodePort of Your Ingress Controller's Service
+1. You're asking for two pieces of information that, when combined, will give you what you need for your HAProxy configuration:
+
+The IP addresses of your Kubernetes worker nodes.
+The NodePort exposed by your Ingress Controller's Service.
+Here are the kubectl commands to get that information:
+
+1. Get the IP Addresses of Your Kubernetes Worker Nodes
+You want the IP addresses that are reachable from your external HAProxy servers. This is usually the InternalIP for nodes in a private network or ExternalIP if your nodes have public IPs.
+
+To get the IP addresses of your worker nodes:
+
+Bash
+
+kubectl get nodes -o wide
+Explanation:
+
+kubectl get nodes: This command lists all nodes in your cluster.
+-o wide: This flag provides more detailed output, including INTERNAL-IP and EXTERNAL-IP columns.
+Example Output:
+
+NAME         STATUS   ROLES    AGE   VERSION   INTERNAL-IP    EXTERNAL-IP   OS-IMAGE                                      KERNEL-VERSION                CONTAINER-RUNTIME
+master-1     Ready    master   3d    v1.28.0   10.0.0.10      <none>        Ubuntu 22.04.3 LTS (Jammy Jellyfish)          5.15.0-89-generic             containerd://1.7.1
+worker-1     Ready    <none>   3d    v1.28.0   10.0.0.11      <none>        Ubuntu 22.04.3 LTS (Jammy Jellyfish)          5.15.0-89-generic             containerd://1.7.1
+worker-2     Ready    <none>   3d    v1.28.0   10.0.0.12      <none>        Ubuntu 22.04.3 LTS (Jammy Jellyfish)          5.15.0-89-generic             containerd://1.7.1
+worker-3     Ready    <none>   3d    v1.28.0   10.0.0.13      <none>        Ubuntu 22.04.3 LTS (Jammy Jellyfish)          5.15.0-89-generic             containerd://1.7.1
+In this example, your worker node IPs are 10.0.0.11, 10.0.0.12, and 10.0.0.13. You would use these IPs in your HAProxy backend configuration.
+
+
+
+
+2. Get the NodePort of Your Ingress Controller's Service
 Your Ingress Controller will have a Kubernetes Service of type: NodePort. You need to find the specific port number that Kubernetes allocated for this Service on your nodes.
 
 First, you need to know the name of your Ingress Controller's Service. Common names include ingress-nginx-controller, haproxy-ingress, traefik, etc. It's often in the ingress-nginx or kube-system namespace.
