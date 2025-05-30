@@ -1,0 +1,48 @@
+global
+    log /dev/log    local0 debug
+    chroot /var/lib/haproxy
+    stats socket /run/haproxy/admin.sock mode 660 level admin expose-fd listeners
+    stats timeout 30s
+    user haproxy
+    group haproxy
+    daemon
+
+    # Default SSL options
+    ssl-default-bind-ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384
+    ssl-default-bind-options no-sslv3 no-tlsv10 no-tlsv11 no-tls-tickets
+    ssl-default-server-ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384
+    ssl-default-server-options no-sslv3 no-tlsv10 no-tlsv11 no-tls-tickets
+
+defaults
+    mode http
+    log global
+    option httplog
+    option dontlognull
+    timeout connect 5000ms
+    timeout client 50000ms
+    timeout server 50000ms
+    errorfile 400 /etc/haproxy/errors/400.http
+    errorfile 403 /etc/haproxy/errors/403.http
+    errorfile 408 /etc/haproxy/errors/408.http
+    errorfile 500 /etc/haproxy/errors/500.http
+    errorfile 502 /etc/haproxy/errors/502.http
+    errorfile 503 /etc/haproxy/errors/503.http
+    errorfile 504 /etc/haproxy/errors/504.http
+
+frontend https_frontend
+    bind *:443 ssl crt /etc/haproxy/fullchain.pem # Path to your concatenated certificate file
+    mode http
+    http-request set-header X-Forwarded-Proto https
+    http-request set-header X-Forwarded-For %f
+    http-request set-header X-Real-IP %ci
+    default_backend kubernetes_backend
+
+backend kubernetes_backend
+    mode http
+    # Replace <your_node_ip> with the actual IP address of one of your Kubernetes nodes
+    # Replace <your_nodeport> with the NodePort value of your Kubernetes service
+    server node1 <your_node_ip>:<your_nodeport> check
+
+    # You can add more Kubernetes nodes here for redundancy
+    # server node2 <another_node_ip>:<your_nodeport> check
+    # server node3 <yet_another_node_ip>:<your_nodeport> check
