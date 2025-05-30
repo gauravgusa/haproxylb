@@ -46,3 +46,105 @@ backend kubernetes_backend
     # You can add more Kubernetes nodes here for redundancy
     # server node2 <another_node_ip>:<your_nodeport> check
     # server node3 <yet_another_node_ip>:<your_nodeport> check
+
+
+*****
+
+You're asking how to enable debug-level logging for HAProxy to get more detailed information, especially regarding certificate loading and SSL/TLS handshakes.
+
+There are primarily two places where you control HAProxy's logging level:
+
+HAProxy Global Configuration (haproxy.cfg): This sets the default logging level for HAProxy.
+Syslog/Rsyslog Configuration: This dictates how your operating system's logging daemon processes and stores messages from HAProxy (and other applications).
+Here's how to enable debug level:
+
+1. Modify haproxy.cfg
+Open your haproxy.cfg file (usually /etc/haproxy/haproxy.cfg).
+
+Locate the global section and change the log directive.
+
+Original (example):
+
+Code snippet
+
+global
+    log /dev/log    local0 debug
+    # ... other global settings
+Change local0 debug to local0 debug (it might already be info or notice).
+
+Example for higher verbosity:
+
+Code snippet
+
+global
+    log /dev/log    local0 debug
+    # ... other global settings
+Explanation of log levels (from least to most verbose):
+
+emerg (0)
+alert (1)
+crit (2)
+err (3)
+warning (4)
+notice (5)
+info (6)
+debug (7) - This is what you want for detailed debugging.
+Important Note: Running HAProxy in debug mode in a production environment is generally not recommended for extended periods. It can generate a massive amount of log data, potentially filling up your disk quickly and impacting performance. Use it for targeted troubleshooting and revert to info or notice afterward.
+
+2. Configure Syslog/Rsyslog (if necessary)
+HAProxy sends its logs to the local syslog daemon (e.g., rsyslog, syslog-ng). You need to ensure that your syslog daemon is configured to actually record debug level messages from the local0 facility.
+
+For rsyslog (common on Debian, Ubuntu, CentOS, RHEL):
+
+Check rsyslog configuration:
+The default rsyslog configuration usually handles debug messages. However, sometimes certain facilities or levels are filtered out.
+Check /etc/rsyslog.conf or files in /etc/rsyslog.d/.
+
+Look for lines that might be discarding debug logs, like:
+*.info;mail.none;authpriv.none;cron.none /var/log/messages
+or:
+daemon.*;mail.*;\ news.err;\ *.crit;*.info;*.warn;\ kern.debug;\ lpr.info;lpr.none;\ mark.info;\ auth.info;\ cron.info;\ daemon.info;
+
+You want to ensure that local0.debug is directed to a log file. Often, *.debug or daemon.debug (or local0.debug) will already be set to go to /var/log/syslog or /var/log/messages.
+
+If you're unsure, you can explicitly add a rule for HAProxy's facility and level. For example, to send local0.debug messages to a specific file like /var/log/haproxy-debug.log:
+
+# /etc/rsyslog.d/50-haproxy.conf (create this file if it doesn't exist)
+local0.debug    /var/log/haproxy-debug.log
+Make sure this rule comes before any rules that might discard debug messages.
+
+Restart rsyslog:
+After making changes to rsyslog configuration:
+
+Bash
+
+sudo systemctl restart rsyslog
+# or
+sudo service rsyslog restart
+3. Restart HAProxy
+After modifying haproxy.cfg, you must restart HAProxy for the changes to take effect.
+
+Bash
+
+sudo systemctl restart haproxy
+# or
+sudo service haproxy restart
+4. Monitor Logs
+Now, you can monitor the logs for the increased verbosity:
+
+Bash
+
+sudo journalctl -u haproxy -f
+Or, if you configured rsyslog to send local0.debug to a specific file:
+
+Bash
+
+sudo tail -f /var/log/haproxy-debug.log
+Or, for general system logs:
+
+Bash
+
+sudo tail -f /var/log/syslog # or /var/log/messages
+You should now see much more detailed output from HAProxy, including messages about SSL handshake details, certificate parsing, and potential issues that were previously hidden at lower log levels.
+
+Remember to revert the global log setting in haproxy.cfg back to info or notice once you've finished debugging to prevent excessive log generation.
