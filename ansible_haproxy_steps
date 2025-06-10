@@ -1,0 +1,171 @@
+To set up HAProxy with Keepalived and Apache using Ansible, here's a comprehensive solution:
+
+Solution Overview
+This configuration provides high availability for Apache web servers using HAProxy load balancing and Keepalived for VIP failover. Includes health checks and validation scripts.
+
+Prerequisites
+2 HAProxy/Keepalived nodes
+
+2+ Apache backend servers
+
+Ansible control node
+
+1. Ansible Inventory Structure
+text
+[loadbalancers]
+lb1 ansible_host=192.168.1.10
+lb2 ansible_host=192.168.1.11
+
+[webservers]
+web1 ansible_host=192.168.1.20
+web2 ansible_host=192.168.1.21
+2. Group Variables (group_vars/all.yml)
+text
+vip_address: 192.168.1.100
+interface: eth0
+apache_servers:
+  - 192.168.1.20:80
+  - 192.168.1.21:80
+keepalived_priority:
+  lb1: 150
+  lb2: 100
+3. Ansible Roles Structure
+Apache Web Server Role (roles/apache/tasks/main.yml)
+text
+- name: Install Apache
+  apt:
+    name: apache2
+    state: present
+
+- name: Enable mod_status
+  command: a2enmod status
+
+- name: Configure health check
+  copy:
+    src: healthcheck.html
+    dest: /var/www/html/healthcheck.html
+
+- name: Restart Apache
+  service:
+    name: apache2
+    state: restarted
+HAProxy Role (roles/haproxy/tasks/main.yml)
+text
+- name: Install HAProxy
+  apt:
+    name: haproxy
+    state: present
+
+- name: Configure HAProxy
+  template:
+    src: haproxy.cfg.j2
+    dest: /etc/haproxy/haproxy.cfg
+  notify: Restart HAProxy
+
+- name: Enable HAProxy
+  service:
+    name: haproxy
+    enabled: yes
+    state: started
+Keepalived Role (roles/keepalived/tasks/main.yml)
+text
+- name: Install Keepalived
+  apt:
+    name: keepalived
+    state: present
+
+- name: Configure Keepalived
+  template:
+    src: keepalived.conf.j2
+    dest: /etc/keepalived/keepalived.conf
+  notify: Restart Keepalived
+
+- name: Enable IP forwarding
+  sysctl:
+    name: net.ipv4.ip_nonlocal_bind
+    value: '1'
+    state: present
+4. HAProxy Template (roles/haproxy/templates/haproxy.cfg.j2)
+text
+global
+    log /dev/log local0
+    log /dev/log local1 notice
+    chroot /var/lib/haproxy
+    stats socket /run/haproxy/admin.sock mode 660 level admin
+    stats timeout 30s
+    user haproxy
+    group haproxy
+
+frontend http_front
+    bind {{ vip_address }}:80
+    default_backend http_back
+
+backend http_back
+    balance roundrobin
+    option httpchk GET /healthcheck.html
+    {% for server in apache_servers %}
+    server web{{ loop.index }} {{ server }} check
+    {% endfor %}
+5. Keepalived Configuration (roles/keepalived/templates/keepalived.conf.j2)
+text
+vrrp_script chk_haproxy {
+    script "killall -0 haproxy"
+    interval 2
+    weight 2
+}
+
+vrrp_instance VI_1 {
+    interface {{ interface }}
+    state {{ 'MASTER' if inventory_hostname == 'lb1' else 'BACKUP' }}
+    virtual_router_id 51
+    priority {{ keepalived_priority[inventory_hostname] }}
+    advert_int 1
+
+    virtual_ipaddress {
+        {{ vip_address }}
+    }
+
+    track_script {
+        chk_haproxy
+    }
+}
+6. Validation Script (scripts/lb_test.sh)
+bash
+#!/bin/bash
+VIP="192.168.1.100"
+for i in {1..10}; do
+    echo "Request $i:"
+    curl -s http://$VIP/healthcheck.html | grep 'Server Address'
+    sleep 1
+done
+7. Playbook Execution
+bash
+ansible-playbook -i inventory main.yml
+Key Configuration Notes
+Health Monitoring: HAProxy uses HTTP checks to /healthcheck.html 
+
+VIP Failover: Keepalived maintains VIP using priority-based election 
+
+High Availability:
+
+Automatic failover if HAProxy process dies
+
+Load distribution across multiple Apache servers 
+
+Validation:
+
+Run lb_test.sh to verify load balancing
+
+Check /var/log/haproxy.log for traffic details
+
+Post-Installation Checks
+bash
+# Verify VIP assignment
+ip addr show {{ interface }}
+
+# Check HAProxy stats
+echo "show stat" | sudo socat /var/run/haproxy/admin.sock stdio
+
+# Test failover (on active node)
+systemctl stop haproxy
+This setup provides enterprise-grade load balancing with automatic failover and health monitoring. The Ansible implementation ensures consistent configuration across all nodes .
