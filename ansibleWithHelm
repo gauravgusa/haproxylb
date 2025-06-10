@@ -1,0 +1,82 @@
+Yes, you can create an Ansible playbook that leverages Helm charts to deploy HAProxy and Keepalived in Kubernetes environments. Here's how to adapt the previous infrastructure setup using Helm:
+
+Hybrid Ansible/Helm Approach
+This solution combines Ansible for infrastructure orchestration with Helm for Kubernetes-native deployment of HAProxy and Keepalived.
+
+Prerequisites
+Kubernetes cluster
+
+Helm 3.8+
+
+Ansible 2.14+
+
+kubectl configured on Ansible control node
+
+1. Ansible Playbook Structure
+
+# playbook.yaml
+- name: Deploy HAProxy & Keepalived via Helm
+  hosts: localhost  # Executes from control node
+  vars:
+    haproxy_version: 1.24.0
+    keepalived_version: 0.2.0
+  tasks:
+    - name: Add Helm repositories
+      kubernetes.core.helm_repository:
+        name: haproxytech
+        repo_url: https://haproxytech.github.io/helm-charts
+
+    - name: Deploy HAProxy
+      kubernetes.core.helm:
+        name: haproxy-lb
+        chart_ref: haproxytech/haproxy
+        chart_version: "{{ haproxy_version }}"
+        release_namespace: loadbalancer
+        create_namespace: true
+        values:
+          service:
+            type: LoadBalancer
+          replicaCount: 2
+        wait: true
+
+    - name: Deploy Keepalived
+      kubernetes.core.helm:
+        name: keepalived-vip
+        chart_ref: https://github.com/bsctl/kubelived/releases/download/v{{ keepalived_version }}/kubelived-{{ keepalived_version }}.tgz
+        release_namespace: loadbalancer
+        set_values:
+          - value: "interface=eth0"
+          - value: "vip=192.168.1.100"
+2. Key Helm Chart Configurations
+HAProxy Values Overrides
+
+# haproxy-values.yaml
+controller:
+  ingressClass: haproxy
+  hostNetwork: true
+  kind: DaemonSet
+  service:
+    type: NodePort
+  metrics:
+    enabled: true
+
+Keepalived Configuration
+# keepalived-values.yaml
+vipInterface: eth0
+vipAddress: 192.168.1.100
+nodes:
+  - name: kube-node-1
+    priority: 150
+  - name: kube-node-2 
+    priority: 100
+
+3. Validation Script
+#!/bin/bash
+# Verify Helm releases
+helm list -n loadbalancer
+
+# Check VIP assignment
+kubectl get svc haproxy-lb -n loadbalancer -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+
+# Test load balancing
+kubectl run curl-test --image=curlimages/curl --rm -it -- curl http://haproxy-lb.loadbalancer/healthcheck
